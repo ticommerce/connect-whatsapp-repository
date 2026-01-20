@@ -1,0 +1,10 @@
+[phases.setup]
+aptPkgs = [
+  "chromium",
+  "chromium-sandbox",
+  "nss",
+  "freetype",
+  "harfbuzz",
+  "ca-certificates",
+  "ttf-freefont"
+]
