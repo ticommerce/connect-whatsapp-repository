@@ -49,6 +49,11 @@ client.on('disconnected', () => {
 
 // Manejar mensajes entrantes
 client.on('message', async (message) => {
+  // Ignorar mensajes propios y de grupos
+  if (message.fromMe || message.from.includes('@g.us')) {
+    return;
+  }
+
   console.log('Mensaje recibido:', message.body);
   
   const webhookUrl = process.env.WEBHOOK_URL;
