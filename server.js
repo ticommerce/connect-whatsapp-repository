@@ -16,8 +16,18 @@ const client = new Client({
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--single-process',
-      '--disable-gpu'
+      '--disable-gpu',
+      '--disable-extensions',
+      '--disable-background-networking',
+      '--disable-default-apps',
+      '--disable-sync',
+      '--disable-translate',
+      '--hide-scrollbars',
+      '--metrics-recording-only',
+      '--mute-audio',
+      '--no-default-browser-check',
+      '--safebrowsing-disable-auto-update',
+      '--disable-features=VizDisplayCompositor'
     ]
   }
 });
@@ -63,11 +73,7 @@ client.on('message', async (message) => {
 });
 
 app.get('/', (req, res) => res.json({ ok: true }));
-
-app.get('/status', (req, res) => {
-  res.json({ connected: isConnected, phoneNumber: phoneNumber });
-});
-
+app.get('/status', (req, res) => res.json({ connected: isConnected, phoneNumber }));
 app.get('/qr', (req, res) => {
   if (isConnected) return res.json({ error: 'Ya conectado' });
   if (!qrCodeData) return res.json({ error: 'QR no disponible' });
@@ -78,7 +84,6 @@ app.post('/send', async (req, res) => {
   try {
     const { phone, message } = req.body;
     if (!isConnected) return res.status(503).json({ error: 'No conectado' });
-    
     const chatId = phone.includes('@c.us') ? phone : `${phone}@c.us`;
     await client.sendMessage(chatId, message);
     res.json({ success: true });
