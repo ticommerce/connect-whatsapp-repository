@@ -5,6 +5,9 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+// Health check para Railway
+app.get('/health', (req, res) => res.status(200).send('OK'));
+
 const client = new Client({
   authStrategy: new LocalAuth(),
   puppeteer: {
@@ -16,18 +19,8 @@ const client = new Client({
       '--disable-accelerated-2d-canvas',
       '--no-first-run',
       '--no-zygote',
-      '--disable-gpu',
-      '--disable-extensions',
-      '--disable-background-networking',
-      '--disable-default-apps',
-      '--disable-sync',
-      '--disable-translate',
-      '--hide-scrollbars',
-      '--metrics-recording-only',
-      '--mute-audio',
-      '--no-default-browser-check',
-      '--safebrowsing-disable-auto-update',
-      '--disable-features=VizDisplayCompositor'
+      '--single-process',
+      '--disable-gpu'
     ]
   }
 });
@@ -73,7 +66,11 @@ client.on('message', async (message) => {
 });
 
 app.get('/', (req, res) => res.json({ ok: true }));
-app.get('/status', (req, res) => res.json({ connected: isConnected, phoneNumber }));
+
+app.get('/status', (req, res) => {
+  res.json({ connected: isConnected, phoneNumber });
+});
+
 app.get('/qr', (req, res) => {
   if (isConnected) return res.json({ error: 'Ya conectado' });
   if (!qrCodeData) return res.json({ error: 'QR no disponible' });
@@ -93,7 +90,16 @@ app.post('/send', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 8080;
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server on ${PORT}`);
   client.initialize();
+});
+
+// Evitar que el proceso se cierre inesperadamente
+process.on('SIGTERM', () => {
+  console.log('SIGTERM recibido');
+  server.close(() => {
+    client.destroy();
+    process.exit(0);
+  });
 });
