@@ -5,95 +5,14 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
-app.get('/health', (req, res) => res.status(200).send('OK'));
-
 let client;
 let qrCodeData = null;
 let isConnected = false;
 let phoneNumber = null;
-let isInitializing = false;
 
-function initializeClient() {
-  if (isInitializing) return;
-  isInitializing = true;
-
-  client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: {
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu'
-      ]
-    }
-  });
-
-  client.on('qr', async (qr) => {
-    console.log('QR generado');
-    qrCodeData = await qrcode.toDataURL(qr);
-    isConnected = false;
-  });
-
-  client.on('ready', () => {
-    console.log('Conectado exitosamente');
-    isConnected = true;
-    phoneNumber = client.info?.wid?.user || 'Unknown';
-    isInitializing = false;
-  });
-
-  client.on('authenticated', () => {
-    console.log('Autenticado');
-  });
-
-  client.on('auth_failure', () => {
-    console.log('Fallo autenticación');
-    isConnected = false;
-    qrCodeData = null;
-    isInitializing = false;
-  });
-
-  client.on('disconnected', (reason) => {
-    console.log('Desconectado:', reason);
-    isConnected = false;
-    phoneNumber = null;
-    qrCodeData = null;
-    isInitializing = false;
-  });
-
-  client.on('message', async (message) => {
-    if (message.fromMe || message.from.includes('@g.us')) return;
-
-    const webhookUrl = process.env.WEBHOOK_URL;
-    if (!webhookUrl) return;
-
-    fetch(webhookUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        phone: message.from,
-        name: message._data.notifyName || 'Sin nombre',
-        message: message.body,
-        timestamp: new Date().toISOString()
-      })
-    }).catch(e => console.error('Webhook error:', e.message));
-  });
-
-  // Esperar antes de inicializar
-  setTimeout(() => {
-    client.initialize().catch(err => {
-      console.error('Error al inicializar:', err);
-      isInitializing = false;
-    });
-  }, 2000);
-}
-
-app.get('/', (req, res) => res.json({ ok: true }));
+// Health check - DEBE responder siempre
+app.get('/health', (req, res) => res.status(200).send('OK'));
+app.get('/', (req, res) => res.json({ ok: true, connected: isConnected }));
 
 app.get('/status', (req, res) => {
   res.json({ connected: isConnected, phoneNumber });
@@ -117,16 +36,72 @@ app.post('/send', async (req, res) => {
   }
 });
 
+// INICIAR SERVIDOR PRIMERO
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server on ${PORT}`);
-  initializeClient();
+  console.log(`✅ Server running on ${PORT}`);
+  
+  // INICIALIZAR WHATSAPP DESPUÉS (asíncrono)
+  setTimeout(() => {
+    console.log('🔄 Iniciando WhatsApp...');
+    
+    client = new Client({
+      authStrategy: new LocalAuth(),
+      puppeteer: {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--no-first-run',
+          '--single-process',
+          '--disable-gpu'
+        ]
+      }
+    });
+
+    client.on('qr', async (qr) => {
+      console.log('📱 QR generado');
+      qrCodeData = await qrcode.toDataURL(qr);
+    });
+
+    client.on('ready', () => {
+      console.log('✅ WhatsApp conectado');
+      isConnected = true;
+      phoneNumber = client.info?.wid?.user || 'Unknown';
+    });
+
+    client.on('disconnected', (reason) => {
+      console.log('❌ Desconectado:', reason);
+      isConnected = false;
+      phoneNumber = null;
+      qrCodeData = null;
+    });
+
+    client.on('message', async (message) => {
+      if (message.fromMe || message.from.includes('@g.us')) return;
+      const webhookUrl = process.env.WEBHOOK_URL;
+      if (!webhookUrl) return;
+      
+      fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          phone: message.from,
+          name: message._data.notifyName || 'Sin nombre',
+          message: message.body,
+          timestamp: new Date().toISOString()
+        })
+      }).catch(e => console.error('❌ Webhook:', e.message));
+    });
+
+    client.initialize().catch(err => console.error('❌ Error:', err));
+  }, 3000);
 });
 
 process.on('SIGTERM', () => {
-  console.log('SIGTERM recibido');
   server.close(() => {
     if (client) client.destroy();
     process.exit(0);
   });
-}); 
+});
