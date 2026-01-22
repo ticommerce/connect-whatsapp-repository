@@ -5,65 +5,93 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
-// Health check para Railway
 app.get('/health', (req, res) => res.status(200).send('OK'));
 
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: {
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--single-process',
-      '--disable-gpu'
-    ]
-  }
-});
-
+let client;
 let qrCodeData = null;
 let isConnected = false;
 let phoneNumber = null;
+let isInitializing = false;
 
-client.on('qr', async (qr) => {
-  console.log('QR recibido');
-  qrCodeData = await qrcode.toDataURL(qr);
-});
+function initializeClient() {
+  if (isInitializing) return;
+  isInitializing = true;
 
-client.on('ready', () => {
-  console.log('Conectado');
-  isConnected = true;
-  phoneNumber = client.info?.wid?.user || 'Unknown';
-});
+  client = new Client({
+    authStrategy: new LocalAuth(),
+    puppeteer: {
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--no-first-run',
+        '--no-zygote',
+        '--single-process',
+        '--disable-gpu'
+      ]
+    }
+  });
 
-client.on('disconnected', () => {
-  console.log('Desconectado');
-  isConnected = false;
-  phoneNumber = null;
-  qrCodeData = null;
-});
+  client.on('qr', async (qr) => {
+    console.log('QR generado');
+    qrCodeData = await qrcode.toDataURL(qr);
+    isConnected = false;
+  });
 
-client.on('message', async (message) => {
-  if (message.fromMe || message.from.includes('@g.us')) return;
+  client.on('ready', () => {
+    console.log('Conectado exitosamente');
+    isConnected = true;
+    phoneNumber = client.info?.wid?.user || 'Unknown';
+    isInitializing = false;
+  });
 
-  const webhookUrl = process.env.WEBHOOK_URL;
-  if (!webhookUrl) return;
+  client.on('authenticated', () => {
+    console.log('Autenticado');
+  });
 
-  fetch(webhookUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      phone: message.from,
-      name: message._data.notifyName || 'Sin nombre',
-      message: message.body,
-      timestamp: new Date().toISOString()
-    })
-  }).catch(e => console.error('Webhook error:', e.message));
-});
+  client.on('auth_failure', () => {
+    console.log('Fallo autenticación');
+    isConnected = false;
+    qrCodeData = null;
+    isInitializing = false;
+  });
+
+  client.on('disconnected', (reason) => {
+    console.log('Desconectado:', reason);
+    isConnected = false;
+    phoneNumber = null;
+    qrCodeData = null;
+    isInitializing = false;
+  });
+
+  client.on('message', async (message) => {
+    if (message.fromMe || message.from.includes('@g.us')) return;
+
+    const webhookUrl = process.env.WEBHOOK_URL;
+    if (!webhookUrl) return;
+
+    fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        phone: message.from,
+        name: message._data.notifyName || 'Sin nombre',
+        message: message.body,
+        timestamp: new Date().toISOString()
+      })
+    }).catch(e => console.error('Webhook error:', e.message));
+  });
+
+  // Esperar antes de inicializar
+  setTimeout(() => {
+    client.initialize().catch(err => {
+      console.error('Error al inicializar:', err);
+      isInitializing = false;
+    });
+  }, 2000);
+}
 
 app.get('/', (req, res) => res.json({ ok: true }));
 
@@ -92,14 +120,13 @@ app.post('/send', async (req, res) => {
 const PORT = process.env.PORT || 8080;
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Server on ${PORT}`);
-  client.initialize();
+  initializeClient();
 });
 
-// Evitar que el proceso se cierre inesperadamente
 process.on('SIGTERM', () => {
   console.log('SIGTERM recibido');
   server.close(() => {
-    client.destroy();
+    if (client) client.destroy();
     process.exit(0);
   });
-});
+}); 
